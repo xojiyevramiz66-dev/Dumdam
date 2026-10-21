@@ -18,37 +18,71 @@ jobs:
   build:
     name: Build Android APK
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Set up Java
+      - name: Set up Java 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Install Android SDK, NDK and CMake
         run: |
-          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;27.2.12479018" "cmake;3.22.1"
+          sdkmanager --install \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: Verify Android tools
+        run: |
+          sdkmanager --list_installed
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME/platforms/android-35"
+          test -d "$ANDROID_HOME/ndk/27.2.12479018"
+          test -d "$ANDROID_HOME/cmake/3.22.1"
 
       - name: Check Gradle wrapper
         run: |
-          if [ ! -f ./gradlew ]; then
+          if [ ! -f "./gradlew" ]; then
             echo "::error::gradlew is missing from the repository root"
             exit 1
           fi
           chmod +x ./gradlew
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug
+      - name: Check project configuration
+        run: |
+          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
+            echo "::error::Gradle settings file not found"
+            exit 1
+          fi
 
-      - name: Upload APK
+          if [ ! -f "app/build.gradle" ] && [ ! -f "app/build.gradle.kts" ]; then
+            echo "::error::app/build.gradle or app/build.gradle.kts not found"
+            exit 1
+          fi
+
+      - name: Build debug APK
+        run: |
+          ./gradlew --no-daemon --stacktrace assembleDebug
+
+      - name: Find generated APK
+        if: success()
+        run: |
+          find . -type f -path "*/build/outputs/apk/*.apk" -print
+
+      - name: Upload APK artifact
         if: always() && hashFiles('**/build/outputs/apk/**/*.apk') != ''
         uses: actions/upload-artifact@v4
         with:
