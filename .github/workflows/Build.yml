@@ -33,10 +33,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
-        with:
-          packages: platform-tools
 
-      - name: Install Android SDK, NDK and CMake
+      - name: Install Android tools
         run: |
           sdkmanager --install \
             "platform-tools" \
@@ -45,48 +43,54 @@ jobs:
             "ndk;27.2.12479018" \
             "cmake;3.22.1"
 
-      - name: Verify Android tools
+      - name: Verify project files
         run: |
-          sdkmanager --list_installed
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          test -d "$ANDROID_HOME/platforms/android-35"
-          test -d "$ANDROID_HOME/ndk/27.2.12479018"
-          test -d "$ANDROID_HOME/cmake/3.22.1"
+          test -f gradlew
+          test -f settings.gradle.kts || test -f settings.gradle
+          test -f app/build.gradle.kts || test -f app/build.gradle
+          chmod +x gradlew
 
-      - name: Check Gradle wrapper
+      - name: Restore missing GGML source files
         run: |
-          if [ ! -f "./gradlew" ]; then
-            echo "::error::gradlew is missing from the repository root"
-            exit 1
-          fi
-          chmod +x ./gradlew
+          git clone --depth 1 \
+            https://github.com/visitor257/Ponko.git \
+            /tmp/ponko-upstream
 
-      - name: Check project configuration
+          SOURCE="/tmp/ponko-upstream/app/src/main/cpp/sd/ggml/src"
+          TARGET="app/src/main/cpp/sd/ggml/src"
+
+          test -f "$SOURCE/CMakeLists.txt"
+          test -f "$SOURCE/ggml.c"
+
+          mkdir -p "$TARGET"
+          cp -a "$SOURCE/." "$TARGET/"
+
+          test -f "$TARGET/CMakeLists.txt"
+          test -f "$TARGET/ggml.c"
+
+          echo "GGML source files restored:"
+          find "$TARGET" -maxdepth 2 -type f | head -80
+
+      - name: Verify native build configuration
         run: |
-          if [ ! -f "settings.gradle" ] && [ ! -f "settings.gradle.kts" ]; then
-            echo "::error::Gradle settings file not found"
-            exit 1
-          fi
-
-          if [ ! -f "app/build.gradle" ] && [ ! -f "app/build.gradle.kts" ]; then
-            echo "::error::app/build.gradle or app/build.gradle.kts not found"
-            exit 1
-          fi
+          test -f app/src/main/cpp/CMakeLists.txt
+          test -f app/src/main/cpp/sd/ggml/CMakeLists.txt
+          test -d app/src/main/cpp/sd/ggml/src
 
       - name: Build debug APK
         run: |
           ./gradlew --no-daemon --stacktrace assembleDebug
 
-      - name: Find generated APK
+      - name: List APK files
         if: success()
         run: |
           find . -type f -path "*/build/outputs/apk/*.apk" -print
 
       - name: Upload APK artifact
-        if: always() && hashFiles('**/build/outputs/apk/**/*.apk') != ''
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Dumdam-debug-APK
-          path: '**/build/outputs/apk/**/*.apk'
+          path: "**/build/outputs/apk/**/*.apk"
           if-no-files-found: warn
           retention-days: 14
