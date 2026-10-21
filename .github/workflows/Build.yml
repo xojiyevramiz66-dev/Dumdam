@@ -33,12 +33,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install Android NDK and CMake
+      - name: Install Android SDK packages
         run: |
-          sdkmanager --install \
+          set -euo pipefail
+
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+
+          SDKMANAGER="$(find "${ANDROID_HOME}/cmdline-tools" \
+            -type f -name sdkmanager | sort -V | tail -n 1)"
+
+          if [ -z "$SDKMANAGER" ] || [ ! -x "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" --install \
             "platform-tools" \
             "platforms;android-35" \
             "build-tools;35.0.0" \
@@ -49,33 +60,56 @@ jobs:
         run: |
           java -version
           echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "Installed NDK versions:"
           ls "$ANDROID_HOME/ndk"
+          echo "Installed CMake versions:"
+          ls "$ANDROID_HOME/cmake"
 
-      - name: Check Gradle wrapper
+      - name: Check project files
         run: |
+          set -e
+
           test -f ./gradlew
-          chmod +x ./gradlew
-
-      - name: Check native source files
-        run: |
           test -f app/src/main/cpp/CMakeLists.txt
           test -d app/src/main/cpp/sd
-          echo "Native C++ source files found."
+
+          chmod +x ./gradlew
+
+          echo "Required project files found."
 
       - name: Build Debug APK
         run: |
-          ./gradlew --no-daemon --stacktrace assembleDebug
+          ./gradlew \
+            --no-daemon \
+            --stacktrace \
+            assembleDebug
+
+      - name: Verify APK
+        if: success()
+        run: |
+          set -e
+
+          APK_PATH="app/build/outputs/apk/debug"
+
+          if ! find "$APK_PATH" -maxdepth 1 -name "*.apk" \
+            -type f | grep -q .; then
+            echo "ERROR: APK was not generated."
+            exit 1
+          fi
+
+          find "$APK_PATH" -maxdepth 1 -name "*.apk" -type f \
+            -exec ls -lh {} \;
 
       - name: Upload APK
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: Dumdam-debug-apk
           path: app/build/outputs/apk/debug/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14
 
-      - name: Upload native build logs
+      - name: Upload build logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
